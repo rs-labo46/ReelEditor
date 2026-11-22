@@ -22,7 +22,7 @@ export default function Auth({
     e.preventDefault();
     const data = new FormData(e.currentTarget); //送信されたフォームから入力値を取得する
     const email = String(data.get("email") ?? "");
-    const password = String(data.get("email") ?? "");
+    const password = String(data.get("password") ?? "");
 
     const done = signup
       ? await onSignup({
