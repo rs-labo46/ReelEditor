@@ -109,7 +109,7 @@ export const authHandlers = [
     return HttpResponse.json(authView(), { status: 201 });
   }),
 
-  //POST /api/login　ログイン処理
+  //POST /api/login ログイン処理
   http.post("/api/login", async ({ request }) => {
     //CSRF Tokenが一致しなければ403
     if (!allowed(request)) {
@@ -147,7 +147,7 @@ export const authHandlers = [
     return HttpResponse.json(authView());
   }),
 
-  //POST /api/refresh　ログイン状態の復元
+  //POST /api/refresh ログイン状態の復元
   http.post("/api/refresh", ({ request }) => {
     //CSRF Tokenを確認
     if (!allowed(request)) {
@@ -168,7 +168,7 @@ export const authHandlers = [
     return HttpResponse.json(authView());
   }),
 
-  //GET /api/me　現在のユーザー情報を取得
+  //GET /api/me 現在のユーザー情報を取得
   http.get("/api/me", ({ request }) =>
     //Access Tokenが正しければユーザー情報を返す
     authorized(request)
@@ -179,7 +179,7 @@ export const authHandlers = [
         failure(401, "AUTH_REQUIRED", "ログインが必要です"),
   ),
 
-  //POST /api/logout　ログアウト処理
+  //POST /api/logout ログアウト処理
   http.post("/api/logout", ({ request }) => {
     //CSRF Tokenの確認
     if (!allowed(request)) {
@@ -195,7 +195,7 @@ export const authHandlers = [
     mock.user = null; //現在のユーザー情報を削除
     saveMockSession();
 
-    //204 No Content　成功したがレスポンス本文は返さない
+    //204 No Content 成功したがレスポンス本文は返さない
     return new HttpResponse(null, {
       status: 204,
     });

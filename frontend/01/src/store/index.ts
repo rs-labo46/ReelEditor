@@ -11,7 +11,6 @@ const useStore = create<State>()(
   devtools(
     (set) => ({
       user: null,
-
       // User情報の変更をDevtoolsに記録する
       setUser: (user) => set({ user }, false, "auth/setUser"),
     }),

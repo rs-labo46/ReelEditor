@@ -1,7 +1,21 @@
-import { useEffect, useState } from "react";
-import type { LoginInput, SignupInput } from "../types/auth";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as api from "../api/client";
-import useStore from "../store";
+import type { LoginInput, SignupInput } from "../types/auth";
+import { useError } from "./useErrors";
+
+let restoreInFlight: Promise<void> | null = null;
+function restoreOnce(): Promise<void> {
+  if (restoreInFlight) return restoreInFlight;
+  const task = api.restore().then(() => undefined);
+  restoreInFlight = task;
+  void task
+    .finally(() => {
+      if (restoreInFlight === task) restoreInFlight = null;
+    })
+    .catch(() => {});
+  return task;
+}
 
 //useAuthが返すデータと関数の型
 type State = {
@@ -9,6 +23,7 @@ type State = {
   busy: boolean; //会員登録・ログイン・ログアウトのApiの処理中
   error: string;
   notice: string; //成功メッセージ
+  restoreError: boolean;
   minPassword: number; //パスワードの最小文字数
   signUp: (input: SignupInput) => Promise<boolean>;
   login: (input: LoginInput) => Promise<boolean>;
@@ -18,75 +33,105 @@ type State = {
 
 //認証に必要な状態と操作
 export default function useAuth(): State {
+  const client = useQueryClient();
+  const { error, clearError, showError } = useError();
   const [checking, setChecking] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [restoreError, setRestoreError] = useState(false);
   const [notice, setNotice] = useState("");
-  const [minPassword, setMinPassword] = useState(8); //初期値は8文字
-  const setUser = useStore((s) => s.setUser); //Zustandからユーザー情報を更新する関数を取得
+  const actionInFlight = useRef(false);
 
-  //ログイン状態の確認と復元
-  async function retry(): Promise<void> {
+  //サーバーの設定値。キャッシュするが認証トークンは保存しない。
+  const configQuery = useQuery({
+    queryKey: ["app", "config"],
+    queryFn: api.getConfig,
+    staleTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  //ユーザーが実行する更新系API。自動再試行しない。
+  const signUpMutation = useMutation({
+    mutationFn: (input: SignupInput) => api.signUp(input),
+    retry: false,
+    onSuccess: () => {
+      client.removeQueries({ queryKey: ["projects"] });
+      setNotice("登録が完了し、自動ログインしました");
+    },
+  });
+  const loginMutation = useMutation({
+    mutationFn: (input: LoginInput) => api.login(input),
+    retry: false,
+    onSuccess: () => {
+      client.removeQueries({ queryKey: ["projects"] });
+      setNotice("ログインしました");
+    },
+  });
+  const logoutMutation = useMutation({
+    mutationFn: () => api.logoutAll(),
+    retry: false,
+    onSuccess: () => {
+      // 別ユーザーへ前ユーザーのプロジェクト情報を見せない。
+      client.removeQueries({ queryKey: ["projects"] });
+      setNotice("全端末からログアウトしました");
+    },
+  });
+
+  const retry = useCallback(async (): Promise<void> => {
     setChecking(true);
-    setError("");
-
+    setRestoreError(false);
+    clearError();
     try {
-      //GET/config バックから設定情報を取得
-      const config = await api.getConfig();
-      setMinPassword(config.min_password); //更新
-
-      const u = await api.restore(); //POST/refresh リフレッシュトークンを使って復元を試み、成功したらUserを返す。認証できないときはnull
-      setUser(u); //Zustandのユーザー情報を更新
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "ログイン状態を確認できません");
+      // QueryClientを経由して取得し、重複したGETはQuery側でまとめる。
+      await client.ensureQueryData({
+        queryKey: ["app", "config"],
+        queryFn: api.getConfig,
+        staleTime: 60_000,
+      });
+      // 起動時の復元はQueryキャッシュに載せない
+      await restoreOnce();
+      // API内でZustandが同期。ここではUserが消えても安全な状態にする。
+    } catch (cause: unknown) {
+      setRestoreError(true);
+      showError(cause);
     } finally {
       setChecking(false);
     }
-  }
-  //起動時に1回だけ復元を試みる
+  }, [client, clearError, showError]);
+
+  // マウント時に復元。Effect内から直接setStateせず非同期の継続で更新する。
   useEffect(() => {
-    void retry();
-  }, []);
+    void Promise.resolve().then(retry);
+  }, [retry]);
 
-  //認証処理の共通実行関数
-  async function run(action: () => Promise<void>): Promise<boolean> {
-    if (busy || checking) return false; //API処理中、またはログイン状態の確認中なら実行しない
-    setBusy(true);
-    setError("");
+  const run = async (action: () => Promise<unknown>): Promise<boolean> => {
+    if (actionInFlight.current || checking) return false;
+    actionInFlight.current = true;
+    clearError();
     setNotice("");
-
     try {
       await action();
       return true;
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "処理に失敗しました");
+    } catch (cause: unknown) {
+      showError(cause);
       return false;
     } finally {
-      setBusy(false);
+      actionInFlight.current = false;
     }
-  }
+  };
 
   return {
     checking,
-    busy,
+    busy:
+      signUpMutation.isPending ||
+      loginMutation.isPending ||
+      logoutMutation.isPending,
     error,
+    restoreError,
     notice,
-    minPassword,
-    signUp: (input) =>
-      run(async () => {
-        await api.signUp(input);
-        setNotice("登録が完了し、自動ログインしました");
-      }),
-    login: (input) =>
-      run(async () => {
-        await api.login(input);
-        setNotice("ログインしました");
-      }),
+    minPassword: configQuery.data?.min_password ?? 8,
+    signUp: (input) => run(() => signUpMutation.mutateAsync(input)),
+    login: (input) => run(() => loginMutation.mutateAsync(input)),
     logout: async () => {
-      await run(async () => {
-        await api.logoutAll();
-        setNotice("全端末からログアウトしました");
-      });
+      await run(() => logoutMutation.mutateAsync());
     },
     retry,
   };

@@ -83,9 +83,9 @@ function clear(broadcast: boolean): void {
 }
 
 //ログイン成功時の認証情報を保持
-// 1. バックエンドの認証応答が正しいか検証。
-// 2. Access Tokenをメモリ上に保存。
-// 3. ユーザー情報をZustandへ反映。
+//1. バックエンドの認証応答が正しいか検証。
+//2. Access Tokenをメモリ上に保存。
+//3. ユーザー情報をZustandへ反映。
 function accept(raw: unknown, epoch: number): User {
   const v = object(raw);
   const u = user(v.user);
@@ -108,7 +108,7 @@ function accept(raw: unknown, epoch: number): User {
 
 //同時に認証処理を実行させない
 async function locked<T>(action: () => Promise<T>): Promise<T> {
-  //navigator.locksは、同じ名前のロックを使う処理を順番に実行するブラウザの機能
+  //navigator.locks同じ名前のロックを使う処理を順番に実行するブラウザの機能
   if (typeof navigator === "undefined" || !navigator.locks) {
     throw new ApiError(
       503,
@@ -208,10 +208,21 @@ export async function login(input: LoginInput): Promise<User> {
   });
 }
 
-//ログイン状態を復元
-export async function restore(): Promise<User | null> {
+// 同時に起動したログイン復元処理では、同じPromiseを共有する。
+// navigator.locks単独では重複通信を防げない。
+let restoreInFlight: Promise<User | null> | null = null;
+
+// ログイン状態を復元する。Access TokenはZustandや永続ストレージへ保存しない。
+export function restore(): Promise<User | null> {
   setupChannel();
-  return locked(async () => {
+
+  // すでに有効なセッションを復元済みなら再発行を要求しない。
+  if (state.session && state.session.expiresAt > Date.now() + 30_000) {
+    return Promise.resolve(state.session.user);
+  }
+  if (restoreInFlight) return restoreInFlight;
+
+  const task = locked(async () => {
     try {
       const token = await csrf();
       const epoch = state.epoch;
@@ -228,6 +239,11 @@ export async function restore(): Promise<User | null> {
       throw e;
     }
   });
+
+  restoreInFlight = task.finally(() => {
+    restoreInFlight = null;
+  });
+  return restoreInFlight;
 }
 
 //ログイン中のユーザー情報を取得する。

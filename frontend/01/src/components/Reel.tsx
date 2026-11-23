@@ -30,7 +30,7 @@ export default function Reel() {
             </p>
           )}
         </div>
-        {!auth.checking && auth.error && (
+        {!auth.checking && auth.restoreError && (
           <button
             type="button"
             onClick={() => {
