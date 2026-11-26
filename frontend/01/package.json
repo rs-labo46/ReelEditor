@@ -13,6 +13,9 @@
     "verify": "npm run lint && npm run test:unit && npm run build"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@tanstack/react-query": "^5.108.3",
     "axios": "^1.21.1",
     "react": "^19.3.1",
